@@ -1,0 +1,544 @@
+/****************************************************************************
+*
+* McStas, neutron ray-tracing package
+*         Copyright (C) 1997-2009, All rights reserved
+*         Risoe National Laboratory, Roskilde, Denmark
+*         Institut Laue Langevin, Grenoble, France
+*
+* Component: double_vmirror_v2
+*
+* %I
+* Written by:adapted from Peter Christiansen's pol_guide_v_mirror
+* Date: July 2006
+* Version: $Revision: 1.1 $
+* Origin: RISOE
+* Release: McStas 1.12a
+*
+* Polarising guide with two supermirrors sitting in a v-shape inside.
+*
+* %D
+* Models a rectangular guide with entrance centered on the Z axis and
+* with two supermirros sitting in a v-shape inside.
+* The entrance lies in the X-Y plane.  Draws a true depiction
+* of the guide with mirrors, and trajectories.
+* The polarisation is handled similar to in Monochromator_pol.
+* The reflec functions are handled similar to Pol_mirror.
+* The up direction is hardcoded to be along the y-axis (0, 1, 0)
+*
+* GRAVITY: YES
+* POLARISATION: YES
+*
+* %BUGS 
+* No absorption by mirror.
+*
+* %P
+* INPUT PARAMETERS:
+*
+* x1:        [m]    Width at the guide entry
+* y1:        [m]    Height at the guide entry
+* x2:        [m]    Width at the guide entry
+* y2:        [m]    Height at the guide entry
+* v1length:   [m]    length of guide
+* v2length:   [m]    length of guide
+* totalLength [m]    total length of the device
+* separation:[m]    separation of the 2 v's
+* rFuncTB:     [1]    Guide Reflection function for top and bottom
+* rParTB:      [1]    Guide Parameters for rFunc for top and bottom
+* rFuncLR:     [1]    Guide Reflection function for top and bottom
+* rParLR:      [1]    Guide Parameters for rFunc for top and bottom
+* rUpFuncv1:   [1]    Mirror Reflection function for spin up v1
+* rUpParv1:    [1]    Mirror Parameters for rUpFunc v1
+* rDownFuncv1: [1]    Mirror Reflection function for spin down v1
+* rDownParv1:  [1]    Mirror Parameters for rDownFunc v1
+* rUpFuncv2:   [1]    Mirror Reflection function for spin up v2
+* rUpParv2:    [1]    Mirror Parameters for rUpFunc v2
+* rDownFuncv2: [1]    Mirror Reflection function for spin down v2
+* rDownParv2:  [1]    Mirror Parameters for rDownFunc v2
+* option:    [1]    Option for guide
+* useTables: [1]    Parameters are 0: Values, 1: Table names 
+* debug:     [1]    if debug > 0 print out some internal runtime parameters
+*
+* OUTPUT PARAMETERS:
+*
+* localG:       Gravity vector in guide reference system (m/s/s)
+* normalTop:    One of several normal vectors used for defining the geometry (1)
+* pointTop:     One of several points used for defining the geometry (1)
+* rParPtr:      One of several pointers to reflection parameters used with the ref. functions. (*)
+* 
+*
+* %L
+*
+* %E
+*******************************************************************************/
+
+DEFINE COMPONENT vmirror
+//DEFINITION PARAMETERS (x1, x2, y1, y2, v1length, v2length, totalLength, separation,
+DEFINITION PARAMETERS (x1, x2, y1, y2, length,
+		       rFuncTB=StdReflecFunc, rParTB,
+		       rFuncLR=StdReflecFunc, rParLR,
+                       rUpFuncv1=StdReflecFunc, rDownFuncv1=StdReflecFunc,
+                       rUpParv1, rDownParv1,
+		       rUpFuncv2=StdReflecFunc, rDownFuncv2=StdReflecFunc, 
+		       rUpParv2, rDownParv2, useTables=0)
+SETTING PARAMETERS (int debug=0)
+OUTPUT PARAMETERS (localG, 
+		   normalTop, normalBot, normalLeft, normalRight, normalInOut,
+		   pointTop, pointBot, pointLeft, pointRight,
+		   pointIn, pointOut, 
+		   rParTBPtr, rParLRPtr, rUpParv1Ptr, rDownParv1Ptr,rUpParv2Ptr, rDownParv2Ptr)
+//STATE PARAMETERS (x,y,z,vx,vy,vz,t,s1,s2,p)
+//POLARISATION PARAMETERS (sx,sy,sz)
+
+SHARE
+%{
+#include <assert.h>
+%include "pol-lib"
+%include "ref-lib"
+   %}
+
+DECLARE
+%{  
+  Coords localG; 
+  Coords normalTop, normalBot, normalLeft, normalRight, normalInOut; 
+  Coords pointTop, pointBot, pointLeft, pointRight, pointIn, pointOut; 
+//double length;
+  
+#if (useTables)
+  t_Table *rParTBPtr     = 0;
+  t_Table *rParLRPtr     = 0;
+  t_Table *rUpParv1Ptr   = 0;
+  t_Table *rDownParv1Ptr = 0;
+  t_Table *rUpParv2Ptr   = 0;
+  t_Table *rDownParv2Ptr = 0;
+#else 
+  double rParTBPtr[]     = rParTB;
+  double rParLRPtr[]     = rParLR;
+  double rUpParv1Ptr[]   = rUpParv1;
+  double rDownParv1Ptr[] = rDownParv1;
+  double rUpParv2Ptr[]   = rUpParv2;
+  double rDownParv2Ptr[] = rDownParv2;
+#endif
+  %}
+
+INITIALIZE
+%{
+#if (useTables)
+  rParTBPtr     = (t_Table*) malloc(sizeof(t_Table));
+  rParLRPtr     = (t_Table*) malloc(sizeof(t_Table));
+  rUpParv1Ptr   = (t_Table*) malloc(sizeof(t_Table));
+  rDownParv1Ptr = (t_Table*) malloc(sizeof(t_Table));
+  rUpParv2Ptr   = (t_Table*) malloc(sizeof(t_Table));
+  rDownParv2Ptr = (t_Table*) malloc(sizeof(t_Table));
+  if (Table_Read(rParTBPtr, rParTB, 1) <= 0) {
+    fprintf(stderr,"Guide: %s: can not read file %s\n", 
+	    NAME_CURRENT_COMP, rParTB);
+    exit(1);
+  }
+  if (Table_Read(rParLRPtr, rParLR, 1) <= 0) {
+    fprintf(stderr,"Guide: %s: can not read file %s\n", 
+	    NAME_CURRENT_COMP, rParLR);
+    exit(1);
+  }
+  if (Table_Read(rUpParv1Ptr, rUpParv1, 1) <= 0) {
+    fprintf(stderr,"Guide: %s: can not read file %s\n", 
+	    NAME_CURRENT_COMP, rUpParv1);
+    exit(1);
+  }
+  if (Table_Read(rDownParv1Ptr, rDownParv1, 1) <= 0) { 
+    fprintf(stderr,"Guide: %s: can not read file %s\n", 
+	    NAME_CURRENT_COMP, rDownParv1);
+    exit(1);
+  }
+  if (Table_Read(rUpParv2Ptr, rUpParv2, 1) <= 0) {
+    fprintf(stderr,"Guide: %s: can not read file %s\n", 
+	    NAME_CURRENT_COMP, rUpParv2);
+    exit(1);
+  }
+  if (Table_Read(rDownParv2Ptr, rDownParv2, 1) <= 0) { 
+    fprintf(stderr,"Guide: %s: can not read file %s\n", 
+	    NAME_CURRENT_COMP, rDownParv2);
+    exit(1);
+  }
+#endif
+  
+  if ((x1<=0) || (y1<= 0) || (length<=0)) {
+    fprintf(stderr, "POL_guide: %s: NULL or negative length scale!\n"
+	    "ERROR      (x1,y1,length). Exiting\n",
+	    NAME_CURRENT_COMP);
+    exit(1);
+  }
+
+//if (separation+v2length > totalLength) {
+//  fprintf(stderr, "double_vmirror_v2: %s: Length of components exceeds total length. Exiting\n",
+//   NAME_CURRENT_COMP);
+//  exit(1);
+//}
+  
+  if (mcgravitation) {
+    
+    localG = rot_apply(ROT_A_CURRENT_COMP, coords_set(0,-GRAVITY,0));
+    fprintf(stdout,"Pol_guide %s: Gravity is on!\n",
+	    NAME_CURRENT_COMP);
+  } else
+    localG = coords_set(0, 0, 0);
+  
+  // length of whole assembly
+//length=totalLength;
+  
+  // To be able to handle the situation properly where a component of
+  // the gravity is along the z-axis we also define entrance (in) and
+  // exit (out) planes 
+  // The entrance and exit plane are defined by the normal vector 
+  // (0, 0, 1) 
+  // and the two points pointIn=(0, 0, 0) and pointOut=(0, 0, length)
+  
+  normalInOut = coords_set(0, 0, 1);
+  pointIn   = coords_set(0, 0, 0);
+  pointOut  = coords_set(0, 0, length);
+  
+  // Top plane (+y dir) can be spanned by (1, 0, 0) & (0, 0, 1)
+  // and the point (0, y1/2, 0)
+  // A normal vector is (0, 1, 0)
+  normalTop  = coords_set(0, 1, 0);
+  pointTop = coords_set(0, y1/2, 0);
+  
+  // Bottom plane (-y dir) can be spanned by (1, 0, 0) & (0, 0, 1)
+  // and the point (0, -y1/2, 0)
+  // A normal vector is (0, 1, 0)
+  normalBot  = coords_set(0, 1, 0);
+  pointBot = coords_set(0, -y1/2, 0);
+  
+  // Left plane (+x dir) can be spanned by (0, 1, 0) & (0, 0, 1)
+  // and the point (x1/2, 0, 0)
+  // A normal vector is (1, 0, 0)
+  const double sidehalf = (x1-x2)/2;
+//const double norms = 1.0/sqrt(sidehalf*sidehalf + totalLength*totalLength);
+//normalLeft  = coords_set(norms*totalLength, 0, norms*sidehalf);
+  const double norms = 1.0/sqrt(sidehalf*sidehalf + length*length);
+  normalLeft  = coords_set(norms*length, 0, norms*sidehalf);
+  pointLeft = coords_set(x1/2, 0, 0);
+  
+ 
+  // Right plane (-x dir) can be spanned by (0, 1, 0) & (0, 0, 1)
+  // and the point (-x1/2, 0, 0)
+  // A normal vector is (1, 0, 0)
+  normalRight  = coords_set(norms*length, 0, -norms*sidehalf);
+  pointRight = coords_set(-x1/2, 0, 0);
+  
+    
+  
+  %}
+
+TRACE
+%{
+  /* time threshold */
+  const double tThreshold = 1e-10/sqrt(vx*vx + vy*vy + vz*vz); 
+//const double x1half = x2/4;
+  const double x1half = x2/2;
+//const double norm1 = 1.0/sqrt(x1half*x1half + v1length*v1length);
+  const double norm1 = 1.0/sqrt(x1half*x1half + length*length);
+//const double norm2 = 1.0/sqrt(x1half*x1half + v2length*v2length);
+  double R;
+  int imax;
+  
+  Coords normalMirror1, pointMirror1, normalMirror1Back, pointMirror1Back;
+  Coords normalMirror2, pointMirror2, normalMirror2Back, pointMirror2Back;
+  Coords* normalPointer = 0;
+
+  // Pol variables
+  double FN, FM, Rup, Rdown, refWeight;
+  
+  /* Propagate neutron to guide entrance. */
+  PROP_Z0;
+  
+  if (!inside_rectangle(x, y, x1, y1))
+    ABSORB;  
+
+   // Model all four mirror serfaces to allow for reflection off the back of a mirror
+// normalMirror1  = coords_set(norm1*v1length, 0, -norm1*x1half);
+// normalMirror1Back  = coords_set(norm1*v1length, 0, norm1*x1half);
+// pointMirror1 = coords_set(x2/4, 0, 0);
+// pointMirror1Back = coords_set(x2/4, 0, 0);
+// normalMirror2  = coords_set(norm2*v2length, 0, -norm2*x1half);
+// normalMirror2Back  = coords_set(norm2*v2length, 0, norm2*x1half);
+// pointMirror2 = coords_set(-x2/4, 0, 0);
+// pointMirror2Back = coords_set(-x2/4, 0, 0);
+   normalMirror1  = coords_set(norm1*length, 0, -norm1*x1half);
+   normalMirror1Back  = coords_set(norm1*length, 0, norm1*x1half);
+   pointMirror1 = coords_set(0, 0, 0);    
+   pointMirror1Back = coords_set(0, 0, 0);    
+  
+
+  imax=0; // variable to stop huge numbers of bounces
+  for(;;) {
+    double tLeft, tRight, tTop, tBot, tIn, tOut, tMirror1, tMirror2, tMirror1Back, tMirror2Back;
+    double tUp, tSide, time, endtime;
+    double Q; //, dummy1, dummy2, dummy3;
+    Coords vVec, xVec;
+    int mirrorReflect;
+
+    mirrorReflect = 0;
+    xVec = coords_set(x, y, z);
+    vVec = coords_set(vx, vy, vz);
+    
+    solve_2nd_order(&tTop, NULL,0.5*coords_sp(normalTop,localG), 
+		    coords_sp(normalTop, vVec),
+		    coords_sp(normalTop, coords_sub(xVec, pointTop)));
+    
+    solve_2nd_order(&tBot, NULL,0.5*coords_sp(normalBot,localG), 
+		    coords_sp(normalBot, vVec),
+		    coords_sp(normalBot, coords_sub(xVec, pointBot)));
+    
+    solve_2nd_order(&tRight, NULL,0.5*coords_sp(normalRight,localG), 
+		    coords_sp(normalRight, vVec),
+		    coords_sp(normalRight, coords_sub(xVec, pointRight)));
+    
+    solve_2nd_order(&tLeft, NULL,0.5*coords_sp(normalLeft,localG), 
+		    coords_sp(normalLeft, vVec),
+		    coords_sp(normalLeft, coords_sub(xVec, pointLeft)));
+
+    solve_2nd_order(&tIn, NULL,0.5*coords_sp(normalInOut,localG), 
+		    coords_sp(normalInOut, vVec),
+		    coords_sp(normalInOut, coords_sub(xVec, pointIn)));
+
+    solve_2nd_order(&tOut, NULL,0.5*coords_sp(normalInOut,localG), 
+		    coords_sp(normalInOut, vVec),
+		    coords_sp(normalInOut, coords_sub(xVec, pointOut)));
+
+    solve_2nd_order(&tMirror1, NULL,0.5*coords_sp(normalMirror1,localG), 
+		    coords_sp(normalMirror1, vVec),
+		    coords_sp(normalMirror1, coords_sub(xVec, pointMirror1)));
+    
+//    solve_2nd_order(&tMirror2, NULL,0.5*coords_sp(normalMirror2,localG), 
+//		    coords_sp(normalMirror2, vVec),
+//		    coords_sp(normalMirror2, coords_sub(xVec, pointMirror2)));
+
+    solve_2nd_order(&tMirror1Back, NULL,0.5*coords_sp(normalMirror1Back,localG), 
+		    coords_sp(normalMirror1Back, vVec),
+		    coords_sp(normalMirror1Back, coords_sub(xVec, pointMirror1Back)));
+    
+//    solve_2nd_order(&tMirror2Back, NULL,0.5*coords_sp(normalMirror2Back,localG), 
+//		    coords_sp(normalMirror2Back, vVec),
+//		    coords_sp(normalMirror2Back, coords_sub(xVec, pointMirror2Back)));
+
+
+/* Choose appropriate reflection time */
+    if (tTop>tThreshold && (tTop<tBot || tBot<=tThreshold)){
+      tUp=tTop;
+      mirrorReflect = 0; // flag to show which reflection function to use
+    }else{
+      tUp=tBot;
+      mirrorReflect = 0; // flag to show which reflection function to use
+    }
+
+    if (tLeft>tThreshold && (tLeft<tRight || tRight<=tThreshold)){
+      tSide=tLeft;
+      mirrorReflect = 1; // flag to show which reflection function to use
+    }else{
+      tSide=tRight;
+      mirrorReflect = 1; // flag to show which reflection function to use
+    }
+
+    if (tUp>tThreshold && (tUp<tSide || tSide<=tThreshold)){
+      time=tUp;
+      mirrorReflect = 0; // flag to show which reflection function to use
+    }else{
+      time=tSide;
+      mirrorReflect = 1; // flag to show which reflection function to use
+    }
+
+    if (tMirror1>tThreshold && tMirror1<time) {
+      
+      time=tMirror1;
+      mirrorReflect = 2; // flag to show which reflection function to use
+    }
+/*
+    if (tMirror2>tThreshold && tMirror2<time) {
+      
+      time=tMirror2;
+      mirrorReflect = 3; // flag to show which reflection function to use
+    }
+*/
+    if (tMirror1Back>tThreshold && tMirror1Back<time) {
+      
+      time=tMirror1Back;
+      mirrorReflect = 2; // flag to show which reflection function to use
+    }
+/*
+    if (tMirror2Back>tThreshold && tMirror2Back<time) {
+      
+      time=tMirror2Back;
+      mirrorReflect = 3; // flag to show which reflection function to use
+    }
+*/
+    if (time<=tThreshold)
+      fprintf(stdout, "tTop: %f, tBot:%f, tRight: %f, tLeft: %f\n"
+	      "tUp: %f, tSide: %f, time: %f\n",
+	      tTop, tBot, tRight, tLeft, tUp, tSide, time);
+
+    /* Has neutron left the guide? */
+    if (tOut>tThreshold && (tOut<tIn || tIn<=tThreshold))
+      endtime=tOut;
+    else
+      endtime=tIn;
+
+    if (time > endtime)
+      break;
+
+    if(time <= tThreshold) {
+      
+      printf("Time below threshold!\n");
+      fprintf(stdout, "tTop: %f, tBot:%f, tRight: %f, tLeft: %f\n"
+	      "tUp: %f, tSide: %f, time: %f\n",
+	      tTop, tBot, tRight, tLeft, tUp, tSide, time);
+      break;
+    }
+      
+    if(debug>0 && time==tLeft) {
+      
+      fprintf(stdout, "\nLeft side hit: x, v, normal, point, gravity\n");
+      coords_print(xVec);
+      coords_print(vVec);
+      coords_print(normalLeft);
+      coords_print(pointLeft);
+      coords_print(localG);
+      
+      fprintf(stdout, "\nA: %f, B: %f, C: %f, tLeft: %f\n",
+	      0.5*coords_sp(normalLeft,localG),coords_sp(normalLeft, vVec), 
+	      coords_sp(normalLeft, coords_sub(xVec, pointLeft)), tLeft);  
+    }
+    
+    if(debug>0)
+      fprintf(stdout, "tTop: %f, tBot:%f, tRight: %f, tLeft: %f\n"
+	      "tUp: %f, tSide: %f, time: %f\n",
+	      tTop, tBot, tRight, tLeft, tUp, tSide, time);
+    
+    if(debug>0)
+      fprintf(stdout, "Start v: (%f, %f, %f)\n", vx, vy, vz);
+
+    PROP_DT(time);
+    if (mcgravitation)
+      vVec = coords_set(vx, vy, vz);
+    SCATTER;
+    
+    if(time==tTop)
+      normalPointer = &normalTop;
+    else if(time==tBot)
+      normalPointer = &normalBot;
+    else if(time==tRight)
+      normalPointer = &normalRight;
+    else if(time==tLeft)
+      normalPointer = &normalLeft;
+    else if(time==tMirror1)
+      normalPointer = &normalMirror1;
+//  else if(time==tMirror2)
+//    normalPointer = &normalMirror2;
+    else if(time==tMirror1Back)
+      normalPointer = &normalMirror1Back;
+//  else if(time==tMirror2Back)
+//    normalPointer = &normalMirror2Back;
+    else
+      fprintf(stderr, "This should never happen!!!!\n");
+
+    // check to see if we have hit a phantom mirror because of the way solve_2nd_order works
+//  if((time==tMirror2 || time==tMirror2Back) && z <= separation)
+//  {
+//    //fprintf(stderr, "Phantom Mirror Hit\n");
+//  }else{
+     Q = 2*coords_sp(vVec, *normalPointer)*V2K;
+     
+     if(mirrorReflect == 0) {
+       // we have hit one of the sides. Always reflect.
+       vVec = coords_add(vVec, coords_scale(*normalPointer, -Q*K2V));
+       rFuncTB(fabs(Q), rParTBPtr, &refWeight);
+       p *= refWeight;
+     }else if(mirrorReflect == 1) {
+       // we have hit one of the sides. Always reflect.
+       vVec = coords_add(vVec, coords_scale(*normalPointer, -Q*K2V));
+       rFuncLR(fabs(Q), rParLRPtr, &refWeight);
+       p *= refWeight;
+     }else{
+       // we have hit one of the mirrors
+       if (mirrorReflect == 2 ){
+         rUpFuncv1(fabs(Q), rUpParv1Ptr, &Rup);
+         rDownFuncv1(fabs(Q), rDownParv1Ptr, &Rdown);
+       } else {
+         rUpFuncv2(fabs(Q), rUpParv2Ptr, &Rup);
+         rDownFuncv2(fabs(Q), rDownParv2Ptr, &Rdown);
+       }
+       assert(Rup>=0 && Rup<=1 && Rdown>=0 && Rdown<=1);   
+
+       GetMonoPolFNFM(Rup, Rdown, &FN, &FM);
+       GetMonoPolRefProb(FN, FM, sy, &refWeight);
+       assert(refWeight>=0 && refWeight<=1); // check that refWeight is meaningfull
+      
+       if (rand01()<refWeight) {
+	//reflect 
+	//SCATTER;
+  	vVec = coords_add(vVec, coords_scale(*normalPointer, -Q*K2V));
+	SetMonoPolRefOut(FN, FM, refWeight, &sx, &sy, &sz);
+       } else {
+	// transmit
+	
+	SetMonoPolTransOut(FN, FM, refWeight, &sx, &sy, &sz);
+       }
+       if(sx*sx+sy*sy+sz*sz>1+1.0e-7)
+       { 
+ 	fprintf(stderr, "x=%f ,y=%f, z=%f \n",sx,sy,sz);
+       }
+       assert(sx*sx+sy*sy+sz*sz<=1+1.0e-7); // check that polarisation is meaningfull with a rounding error for safety
+     }
+//  }
+    if(p==0) {
+      ABSORB;
+      break;
+    }
+
+    // set new velocity vector
+    coords_get(vVec, &vx, &vy, &vz);    
+    
+    if(debug>0)
+      fprintf(stdout, "End v: (%f, %f, %f)\n", vx, vy, vz);
+    // stop huge number of bounces for speed
+    imax++;
+    if(imax>10)
+    {
+	ABSORB;
+	break;
+    }
+
+  }
+  
+  %}
+
+MCDISPLAY
+%{
+  int i, j;
+  
+  magnify("xy");
+  
+  // draw outside of device
+//rectangle("xy", 0, 0, 0, x1, y1);
+//rectangle("xy", 0, 0, totalLength, x2, y2);
+//line(x1/2, -y1/2, 0, x2/2, -y2/2, totalLength);
+//line(x1/2, y1/2, 0, x2/2, y2/2, totalLength);
+//line(-x1/2, -y1/2, 0, -x2/2, -y2/2, totalLength);
+//line(-x1/2, -y1/2, 0, -x2/2, -y2/2, totalLength);
+  // draw inside mirrors v cavity 1
+//line(x2/4, -y1/2, 0, x2/2, -y2/2, v1length);
+//line(x2/4, y1/2, 0,  x2/2, y2/2, v1length);
+//line(x2/4, -y1/2, 0,0, -y2/2, v1length);
+//line(x2/4, y1/2, 0, 0, y2/2, v1length);
+  line(0, -y1/2, 0, x2/2, -y2/2, length);
+  line(0,  y1/2, 0, x2/2,  y2/2, length);
+  line(0, -y1/2, 0, -x2/2, -y2/2, length);
+  line(0,  y1/2, 0, -x2/2,  y2/2, length);
+   // draw inside mirrors v cavity 2
+//line(-x2/4, -y1/2, 0, -x2/2, -y2/2, v2length);
+//line(-x2/4, y1/2, 0,  -x2/2, y2/2, v2length);
+//line(-x2/4, -y1/2, 0,0, -y2/2, v2length);
+//line(-x2/4, y1/2, 0, 0, y2/2, v2length);
+
+%}
+
+END

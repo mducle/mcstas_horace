@@ -1,0 +1,96 @@
+/* %Parameters
+* INPUT PARAMETERS:
+* E_min  : lowest energy sampled      [meV]
+* E_max  : highest energy sampled     [meV]
+* E_foc : energy selected by chopper [meV]
+* nu_hz : frequency of chopper rotation [Hz]
+* type : chopper package selected [sloppy chopper = 1, B chopper = 2]
+* m  : m value of guides
+* 
+*******************************************************************************/
+
+DEFINE INSTRUMENT MAPS(Ei=20, freq=600.0, string chopper="S", string output_filename="mcstas.mcpl", string sample="plate")
+DECLARE
+%{
+/* chopper variables to compute according to "type" input */
+double c_h1,c_h2, roc, chan_w,phase_time,slit_curv,num_slits,width,lam;
+int nslits;
+double E_min, E_max;
+int plate;
+%}
+
+// #include <math.h>
+
+INITIALIZE
+%{
+switch(chopper[0]) {
+  case 'a':
+  case 'A':
+    slit_curv=-1/1.3;
+    num_slits=64;
+    width=0.001087;
+    fprintf(stderr,"A chopper selected\n");
+    break;
+  case 's':
+  case 'S':
+    slit_curv=-1/1.3;
+    num_slits=24;
+    width=0.002899;
+    fprintf(stderr,"Mari Sloppy selected selected\n");
+    break;
+  default:
+    fprintf(stderr,"Chopper Type not recognised\n");
+    exit(1);
+}
+/* hardwired for FC position 10m from moderator */
+phase_time = (2.28e-3*(10.0)/sqrt(Ei));
+lam = sqrt(81.81/Ei);
+E_min = 2.28e-3 * 10.0 / (phase_time+5.e-4); E_min *= E_min;
+E_max = 2.28e-3 * 10.0 / (phase_time-5.e-4); E_max *= E_max;
+plate = strcmp(sample, "plate")==0 ? 1 : 0;
+%}
+
+TRACE
+
+COMPONENT Origin = Arm()
+  AT (0,0,0) ABSOLUTE
+
+/*Merlin style moderator - not sure about relative origin, but anyway */
+COMPONENT source = ViewModISISver1(Face="TS1verBase2016_LH8020_newVM-var_South01_Maps.mcstas", E0 = E_min, E1 = E_max,
+    dist = 1.7, xw = 0.094, yh = 0.094, modPosition=0, tally=8.4, modXsize=0.12, modZsize=0.12)
+ AT (0,0,0) RELATIVE Origin
+
+COMPONENT shutter_guide = Guide_channeled(
+    w1 = 0.094, h1 = 0.094, w2 = 0.08515, h2 = 0.08515, l = 1.9373, alphax = 4.38, alphay = 4.38 ,
+ W=3e-3, mx = 3, my = 3)
+  AT (0, 0, 1.7546) RELATIVE Origin
+
+COMPONENT conv_guide = Guide_channeled(
+    w1 = 0.0847, h1 = 0.0847, w2 = 0.0650, h2 = 0.0650, l = 4.300, alphax = 4.38, alphay = 4.38 ,
+ W=3e-3, mx = 3, my = 3)
+  AT (0, 0, 3.791) RELATIVE Origin
+
+COMPONENT between_guide = Guide_channeled(
+    w1 = 0.06090, h1 = 0.06090, w2 = 0.05703, h2 = 0.05703, l = 0.847, alphax = 4.38, alphay = 4.38 ,
+ W=3e-3, mx = 3, my = 3)
+  AT (0, 0, 9.00) RELATIVE Origin
+
+COMPONENT fermi = FermiChopper(delay=phase_time, radius=0.055, nu=freq,
+  yheight=0.07, w=width ,nslit=num_slits, R0=0.0,
+  Qc=0.02176, alpha=2.33, m=0, length=0.05, eff=0.95, curvature=-slit_curv, zero_time=0)
+  AT (0,0,10) RELATIVE Origin
+
+COMPONENT final_Guide = Guide_channeled(
+    w1 = 0.05432, h1 = 0.05432, w2 = 0.04883, h2 = 0.04883, l = 1.203, alphax = 4.38, alphay = 4.38 ,
+ W=3e-3, mx = 3, my = 3)
+  AT (0, 0, 10.439) RELATIVE Origin
+
+/*Pre-sample slit - now is 48x48mm, which is smaller than before*/
+COMPONENT sampleslit1 = Slit(
+    xmin = -0.024, xmax = 0.024, ymin = -0.024, ymax = 0.024)
+  AT (0, 0, 11.7) RELATIVE Origin
+
+COMPONENT mcplout = MCPL_output_horace(filename=output_filename, plate=plate, restore_neutron=1)
+  AT (0, 0, 12) RELATIVE Origin ROTATED (0, 0, 0) RELATIVE Origin
+
+END
